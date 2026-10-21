@@ -274,7 +274,38 @@ function renderHouses(){
  for(const id of ['housesFile','housesManual','addHouses'])$(id).disabled=locked()||importBusy;
 }
 function csvParts(line,sep){let a=[],v='',quoted=false;for(let i=0;i<line.length;i++){let c=line[i];if(c==='"'){if(quoted&&line[i+1]==='"'){v+='"';i++;}else quoted=!quoted;}else if(c===sep&&!quoted){a.push(v.trim());v='';}else v+=c;}a.push(v.trim());return a;}
-function parseHomes(s){let lines=s.replace(/^\uFEFF/,'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)return [];let sep=lines[0].includes(';')?';':',',h=csvParts(lines[0],sep).map(x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')),portal=h.findIndex(x=>['portal','numero','bloque'].includes(x)),planta=h.findIndex(x=>['planta','piso'].includes(x)),puerta=h.findIndex(x=>['puerta','letra'].includes(x)),vivienda=h.findIndex(x=>['vivienda','casa'].includes(x)),header=portal>=0||vivienda>=0;return [...new Set((header?lines.slice(1):lines).map(line=>{if(!header)return line;let x=csvParts(line,sep);return [portal>=0?x[portal]:'',vivienda>=0?x[vivienda]:'',planta>=0?x[planta]:'',puerta>=0?x[puerta]:''].filter(Boolean).join(' ');}).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length&&x.length<=100))];}
+function parseHomes(s){let lines=s.replace(/^\uFEFF/,'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)return [];let sep=lines[0].includes(';')?';':',',h=csvParts(lines[0],sep).map(x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')),portal=h.findIndex(x=>['portal','numero','bloque'].includes(x)),planta=h.findIndex(x=>['planta','piso'].includes(x)),puerta=h.findIndex(x=>['puerta','letra'].includes(x)),vivienda=h.findIndex(x=>['vivienda','casa'].includes(x)),header=portal>=0||vivienda>=0;return [...new Set((header?lines.slice(1):lines).map(line=>{if(!header)return line;let x=csvParts(line,sep);let floor=planta>=0?(x[planta]||''):'';if(/^\d+$/.test(floor))floor+='º';return [portal>=0?x[portal]:'',vivienda>=0?x[vivienda]:'',floor,puerta>=0?x[puerta]:''].filter(Boolean).join(' ');}).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length&&x.length<=100))];}
+async function readHousingFile(file){
+ if(/\.xlsx$/i.test(file.name)){
+  const ExcelJS=await ensureExcelJS();
+  const book=new ExcelJS.Workbook();
+  await book.xlsx.load(await file.arrayBuffer());
+  const sheet=book.worksheets[0];
+  if(!sheet)throw Error('El Excel no contiene hojas de cálculo.');
+  const toText=value=>{
+   if(value==null)return '';
+   if(typeof value==='object'){
+    if(Array.isArray(value.richText))return value.richText.map(v=>v.text||'').join('');
+    if(value.result!==undefined)return String(value.result??'');
+    if(value.text!==undefined)return String(value.text);
+    return '';
+   }
+   return String(value);
+  };
+  const all=[];
+  sheet.eachRow({includeEmpty:false},row=>{
+   const line=[];
+   const width=Math.min(sheet.columnCount||row.cellCount,30);
+   for(let i=1;i<=width;i++){
+    const v=toText(row.getCell(i).value);
+    line.push('"'+v.replace(/"/g,'""')+'"');
+   }
+   all.push(line.join(';'));
+  });
+  return all.join('\n');
+ }
+ return await file.text();
+}
 async function importHomes(labels){
  if(!room||mode!=='organizer')throw Error('Debes entrar como organizador para importar viviendas.');
  if(locked())throw Error('El censo está bloqueado: ya ha comenzado una votación.');
@@ -335,10 +366,10 @@ $('housesFile').onchange=async e=>{
  importBusy=true;
  $('housesFile').disabled=true;$('addHouses').disabled=true;$('housesManual').disabled=true;
  try{
-  if(!/\.(csv|txt)$/i.test(f.name))throw Error('El archivo debe ser CSV. Desde Excel selecciona Guardar como → CSV UTF-8.');
-  const content=await f.text();
+  if(!/\.(csv|txt|xlsx)$/i.test(f.name))throw Error('Usa un archivo .xlsx o CSV con el censo de viviendas.');
+  const content=await readHousingFile(f);
   const labels=parseHomes(content);
-  if(!labels.length)throw Error('El CSV no contiene viviendas válidas. Usa la columna vivienda o portal;planta;puerta.');
+  if(!labels.length)throw Error('El archivo no contiene viviendas válidas. Usa la columna vivienda o las columnas portal, planta y puerta.');
   await importHomes(labels);
  }catch(err){problem(err);}
  finally{importBusy=false;e.target.value='';setImportBusy(false);}
