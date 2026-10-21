@@ -46,8 +46,8 @@ BEGIN
   PERFORM 1 FROM public.sessions s WHERE s.id=p_session FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Sesión no disponible'; END IF;
   IF p_ids IS NULL OR cardinality(p_ids)>5000 OR
-     (SELECT count(DISTINCT x) FROM unnest(p_ids) x)<>cardinality(p_ids) OR
-     EXISTS(SELECT 1 FROM unnest(p_ids) x WHERE x IS NULL) THEN
+     (SELECT count(DISTINCT p.id) FROM unnest(p_ids) AS p(id))<>cardinality(p_ids) OR
+     EXISTS(SELECT 1 FROM unnest(p_ids) AS p(id) WHERE p.id IS NULL) THEN
     RAISE EXCEPTION 'Selección inválida';
   END IF;
   IF EXISTS(
