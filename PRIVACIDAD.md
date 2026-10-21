@@ -15,6 +15,22 @@ La nueva migración [07_exportacion_excel_detallada.sql](07_exportacion_excel_de
 - La mera identidad anónima de Supabase genera un ID persistente durante la sesión; registros de red y otros metadatos técnicos pueden existir.
 - Un JWT existente puede seguir siendo criptográficamente válido hasta expirar aunque se elimine auth.users. Las consultas a sesiones borradas dejan de funcionar, si RLS está correctamente configurado.
 
+## Corrección 21/10/2026: error «Failed to send a request to the Edge Function»
+
+La publicación de archivos en **GitHub Pages NO despliega la función en Supabase**.
+
+**Despliegue manual, sin CLI:**
+
+1. Abre Supabase → **SQL Editor** y ejecuta [privacy_purge.sql](privacy_purge.sql), que instala `finish_and_purge_session`. No borra sesiones al instalarse; solamente crea una función protegida.
+2. En Supabase entra en **Edge Functions → Deploy a new function → Via Editor**.
+3. Asigna exactamente el nombre `finalizar-reunion` (con guion).
+4. Sustituye el código de ejemplo por el archivo [supabase/functions/finalizar-reunion/index.ts](supabase/functions/finalizar-reunion/index.ts), pulsando **Raw** en GitHub para copiarlo completo.
+5. **Deploy function**. Deja activada la verificación JWT para llamadas desde la sesión autenticada del organizador.
+6. Las variables `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` vienen predefinidas en el entorno de Supabase. No copies ninguna clave administrativa a GitHub, `config.js` o chat.
+7. Abre **Edge Functions** y verifica que aparece `finalizar-reunion`. En **Logs** podrás diagnosticar fallos. Ejecuta una **prueba con datos inventados**, con el Excel ya descargado y todas las preguntas cerradas; verifica que desaparecen la sesión, los votos y las viviendas de las tablas activas, sin afectar otras sesiones.
+
+El código incluye las cabeceras CORS utilizadas por la biblioteca Supabase para que no falle la petición de navegador por ausencia de `x-client-info`. Si la respuesta falla, el cliente **no debe afirmar que se han borrado los datos**: verifica manualmente si la sesión aún existe antes de reintentar.
+
 ## Preparación (OBLIGATORIA antes de utilizar el botón)
 1. Instala los SQL originales `schema.sql` y `upgrade_viviendas.sql` de la aplicación. **No estaban publicados en el repositorio al elaborar esta actualización**. Sin estos esquemas no está operativo el sistema de votación.
 2. Revisa nombres de tablas y FK de tu esquema y ejecuta `privacy_purge.sql` en Supabase SQL Editor. La función comprueba `auth.uid()`, propiedad y preguntas abiertas, y elimina datos en una única transacción.
