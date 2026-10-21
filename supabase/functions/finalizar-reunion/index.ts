@@ -4,7 +4,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 Deno.serve(async (request) => {
-  const headers = { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'authorization, apikey, content-type', 'Access-Control-Allow-Methods':'POST, OPTIONS' };
+  const headers = { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage', 'Access-Control-Allow-Methods':'POST, OPTIONS' };
   if(request.method==='OPTIONS') return new Response('',{status:204,headers});
   if(request.method!=='POST') return new Response(JSON.stringify({error:'Método no permitido'}),{status:405,headers});
   try {
