@@ -1,13 +1,16 @@
 # Privacidad y eliminación de datos · VotaComunidad
 
-**Política adoptada:** se exportan resultados agregados y, a petición explícita del organizador al finalizar la reunión, se elimina inmediatamente el conjunto de datos operativo activo. No se conserva un histórico de sesiones en la app.
+**Política adoptada:** se exporta un Excel con resultados agregados y detalle de votos por vivienda y, a petición explícita del organizador al finalizar la reunión, se elimina inmediatamente el conjunto de datos operativo activo. No se conserva un histórico de sesiones en la app. El acceso al detalle de votos por vivienda está restringido a la identidad técnica del organizador mediante la función SQL `export_session_details`.
+
+## Exportación detallada (v1.5)
+La nueva migración [07_exportacion_excel_detallada.sql](07_exportacion_excel_detallada.sql) permite exportar una hoja «Resumen» con preguntas, estados y recuentos por opción, más una hoja por pregunta con listas de viviendas por respuesta y viviendas sin votar. Es imprescindible informar a los participantes de que **el organizador puede conocer qué votó cada vivienda**. No incluir nombres de propietarios en el censo. No compartir el XLSX públicamente.
 
 ## Qué se elimina
 - Código de sesión, preguntas, censo de portales/viviendas, asignaciones, miembros y votos individuales.
 - Los identificadores de Auth *anónimos* sin referencias en otras sesiones se eliminan desde una Edge Function, nunca desde el navegador.
 
 ## Qué NO puede garantizarse
-- El CSV descargado pasa a estar bajo responsabilidad del organizador; tampoco se puede borrar el caché o capturas de otros usuarios.
+- El Excel .xlsx descargado pasa a estar bajo responsabilidad del organizador. Incluye la relación exacta entre vivienda y voto: **no es un informe anónimo para el organizador**. No se puede borrar el archivo de su equipo ni el caché o capturas de otros usuarios.
 - Datos purgados de la base activa pueden existir temporalmente en backups, PITR y registros técnicos de Supabase. La retención depende del plan y la configuración real. No prometemos borrado instantáneo de backups ni anonimato absoluto (durante la reunión existe vinculación voto-vivienda para evitar duplicidades).
 - La mera identidad anónima de Supabase genera un ID persistente durante la sesión; registros de red y otros metadatos técnicos pueden existir.
 - Un JWT existente puede seguir siendo criptográficamente válido hasta expirar aunque se elimine auth.users. Las consultas a sesiones borradas dejan de funcionar, si RLS está correctamente configurado.
@@ -21,7 +24,7 @@
 6. **Advertencia:** si la purga SQL se confirma pero falla la llamada Auth, la sesión ya no existe y la limpieza de esos usuarios no se puede reintentar desde el panel. Crea una tarea de mantenimiento administrativa que revise usuarios anónimos huérfanos (sin asociaciones con sesiones) y los elimine con una antigüedad prudente. Evita borrar cuentas permanentes.
 
 ## Limitaciones funcionales
-- El navegador solo puede comprobar que se inició la descarga del CSV, no que el usuario haya guardado el archivo correctamente.
+- El navegador solo puede comprobar que se inició la descarga del Excel, no que el organizador lo haya guardado correctamente. El organizador debe abrirlo y comprobarlo antes de autorizar el borrado.
 - El cierre debe requerir confirmación doble. No existe deshacer.
 - Los resultados no quedan disponibles online tras borrar la sesión.
 - No se crea por defecto una tarea de limpieza automática de sesiones abandonadas. Implementar un mecanismo separado de expiración evita retenciones indefinidas si el organizador no completa el cierre.
