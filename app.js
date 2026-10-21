@@ -12,7 +12,7 @@ const newCode=()=>{const letters='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',a=new Uint32
 async function create(){if(working)return;working=true;try{if(!await connect())return;let r;for(let i=0;i<4;i++){r=await db.from('sessions').insert({code:newCode(),owner_id:uid,title:'Reunión de comunidad'}).select().single();if(!r.error||r.error.code!=='23505')break;}if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 async function join(v){if(working)return;working=true;try{if(!await connect())return;let c=String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(c.length!==8)throw Error('Introduce un código de 8 caracteres.');const j=await db.rpc('join_session',{access_code:c});if(j.error)throw j.error;const r=await db.from('sessions').select('*').eq('id',j.data).single();if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 function share(){let u=new URL(location.href);u.search='';u.hash='';u.searchParams.set('s',room.code);return u.toString();}
-function enter(r){availableHomes=[];claimLocked=false;claimEditing=false;claimDraft=new Set();lastSnapshot='';lastError='';exportStarted=false;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,3000);}
+function enter(r){availableHomes=[];claimLocked=false;claimEditing=false;claimDraft=new Set();lastSnapshot='';lastError='';exportStarted=false;exportRevision=null;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,3000);}
 function leave(){clearInterval(poll);room=null;localStorage.removeItem('vota-last-room');history.replaceState(null,'',location.pathname);show('landing');}
 let exportStarted=false;
 let loading=false;
@@ -71,11 +71,143 @@ $('ballotArea').innerHTML='<h2>'+esc(active.title)+'</h2><p class="muted">Tu res
 async function vote(i){if(working||!active)return;working=true;try{let o=active.options[i];if(o===undefined)throw Error('Opción no válida');let v=await db.rpc('cast_unit_votes',{p_question:active.id,p_choice:o});if(v.error)throw v.error;notice('Voto registrado correctamente',true);}catch(e){problem(e);}finally{working=false;refresh();}}
 async function addQuestion(e){e.preventDefault();if(working||!room)return;working=true;try{let title=$('questionTitle').value.trim(),options=$('questionType').value==='binary'?['Sí','No','Abstención']:$('questionOptions').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!title)throw Error('Escribe una pregunta');if(options.length<2||options.length>8||new Set(options).size!==options.length)throw Error('Introduce entre 2 y 8 opciones diferentes');let r=await db.from('questions').insert({session_id:room.id,title,options,status:'draft'});if(r.error)throw r.error;$('questionForm').reset();$('optionsBox').classList.add('hidden');notice('Pregunta añadida',true);}catch(e){problem(e);}finally{working=false;refresh();}}
 async function status(id,s){if(working)return;working=true;try{let r=await db.from('questions').update({status:s}).eq('id',id).select('id,status').single();if(r.error)throw r.error;if(r.data?.status!==s)throw Error('No se ha podido actualizar el estado de la votación');chosen=null;notice(s==='open'?'Votación abierta. Los móviles se actualizarán automáticamente.':'Votación cerrada',true);}catch(e){problem(e);}finally{working=false;refresh();}}
-function exportCsv(){if(!room||!questions.length){notice('No hay preguntas para exportar');return;}let rows=[['Sesión','Pregunta','Estado','Opción','Votos','Total votos']];for(let q of questions){let n=counts.filter(v=>v.question_id===q.id).reduce((a,v)=>a+Number(v.count),0);for(let o of q.options)rows.push([room.code,q.title,q.status,o,Number(counts.find(v=>v.question_id===q.id&&v.choice===o)?.count||0),n]);}let quote=x=>'"'+String(x??'').replace(/"/g,'""')+'"',b=new Blob(['\ufeff'+rows.map(r=>r.map(quote).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='votaciones-'+room.code+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);exportStarted=true;updateFinish();notice('Descarga iniciada: verifica que has guardado el CSV',true);}
+// Solo el organizador puede solicitar el detalle vivienda-voto desde Supabase.
+let exportRevision=null;
+let excelLibraryLoading=null;
+async function ensureExcelJS(){
+ if(window.ExcelJS)return window.ExcelJS;
+ if(!excelLibraryLoading){
+  excelLibraryLoading=new Promise((resolve,reject)=>{
+   const script=document.createElement('script');
+   script.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+   script.async=true;
+   script.onload=()=>window.ExcelJS?resolve(window.ExcelJS):reject(Error('La biblioteca Excel no está disponible.'));
+   script.onerror=()=>reject(Error('No se ha podido descargar el generador Excel. Comprueba la conexión.'));
+   document.head.appendChild(script);
+  }).catch(e=>{excelLibraryLoading=null;throw e;});
+ }
+ return excelLibraryLoading;
+}
+async function getExportSnapshot(){
+ if(!room||mode!=='organizer')throw Error('Solo el organizador puede exportar los votos por vivienda.');
+ const {data,error}=await db.rpc('export_session_details',{p_session:room.id});
+ if(error){
+  if(/schema cache|could not find the function|PGRST202/i.test(error.message||''))
+   throw Error('Falta ejecutar el SQL 07_exportacion_excel_detallada.sql en Supabase.');
+  throw error;
+ }
+ if(!data||!Array.isArray(data.questions)||!Array.isArray(data.dwellings)||!Array.isArray(data.votes)||!data.revision)
+  throw Error('El servidor no ha devuelto una exportación válida.');
+ return data;
+}
+const voteStateLabel={draft:'Pendiente',open:'Abierta',closed:'Cerrada'};
+function buildExcelRows(data){
+ const questions=data.questions,homes=data.dwellings,votes=data.votes;
+ const homeById=new Map(homes.map(h=>[h.id,h.label]));
+ if(votes.some(v=>!homeById.has(v.dwelling_id)))
+  throw Error('Existen votos sin vivienda en el censo. No se exportará un informe incompleto.');
+ const options=[...new Set(questions.flatMap(q=>q.options||[]))];
+ const summary=[['Sesión','Pregunta','Estado',...options,'Total votos','Sin votar']];
+ const sheets=[];
+ for(let index=0;index<questions.length;index++){
+  const q=questions[index],qVotes=votes.filter(v=>v.question_id===q.id);
+  const byOption=new Map((q.options||[]).map(o=>[o,[]]));
+  const voted=new Set();
+  for(const v of qVotes){
+   if(!byOption.has(v.choice))throw Error('Hay un voto con una respuesta no incluida en la pregunta '+(index+1));
+   if(voted.has(v.dwelling_id))throw Error('Hay votos duplicados en la pregunta '+(index+1));
+   voted.add(v.dwelling_id);
+   byOption.get(v.choice).push(String(homeById.get(v.dwelling_id)));
+  }
+  for(const arr of byOption.values())arr.sort((x,y)=>x.localeCompare(y,'es',{numeric:true}));
+  const didNotVote=homes.filter(h=>!voted.has(h.id)).map(h=>String(h.label)).sort((x,y)=>x.localeCompare(y,'es',{numeric:true}));
+  summary.push([data.session,q.title,voteStateLabel[q.status]||q.status,
+   ...options.map(o=>(byOption.get(o)||[]).length),voted.size,didNotVote.length]);
+  sheets.push({index:index+1,title:q.title,status:voteStateLabel[q.status]||q.status,
+    choices:[...byOption.keys(),'Sin votar'],
+    columns:[...byOption.values(),didNotVote]});
+ }
+ return {summary,sheets};
+}
+function beautifySheet(sheet,widths){
+ sheet.views=[{state:'frozen',ySplit:1}];
+ sheet.columns=widths.map(w=>({width:w}));
+ sheet.autoFilter={from:{row:1,column:1},to:{row:1,column:widths.length}};
+ const head=sheet.getRow(1);
+ head.height=27;
+ head.font={bold:true,color:{argb:'FFFFFFFF'}};
+ head.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF234B86'}};
+ head.alignment={vertical:'middle',wrapText:true};
+ for(let i=2;i<=sheet.rowCount;i++){
+  const row=sheet.getRow(i);
+  row.alignment={vertical:'middle',wrapText:true};
+  if(i%2===0)row.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF1F5FC'}};
+ }
+}
+async function exportXlsx(){
+ if(working||!room||mode!=='organizer')return;
+ working=true;exportStarted=false;exportRevision=null;updateFinish();
+ const button=$('exportBtn');button.disabled=true;button.textContent='Preparando Excel…';
+ try{
+  const snapshot=await getExportSnapshot();
+  if(!snapshot.questions.length)throw Error('No hay preguntas para exportar.');
+  const {summary,sheets}=buildExcelRows(snapshot);
+  const ExcelJS=await ensureExcelJS();
+  const book=new ExcelJS.Workbook();
+  book.creator='VotaComunidad';book.subject='Resultados de votaciones por vivienda';
+  book.created=new Date();
+  const resume=book.addWorksheet('Resumen');
+  summary.forEach(line=>resume.addRow(line));
+  beautifySheet(resume,[18,65,18,...summary[0].slice(3,-2).map(()=>19),19,19]);
+  for(const entry of sheets){
+   const prefix='P'+String(entry.index).padStart(2,'0')+' ';
+   const max=31-prefix.length;
+   const name=prefix+(String(entry.title).replace(/[\[\]\:*?\/\\]/g,' ').trim().slice(0,max)||'Pregunta');
+   const tab=book.addWorksheet(name);
+   const num=entry.choices.length;
+   tab.mergeCells(1,1,1,num);tab.getCell(1,1).value='Pregunta '+entry.index+': '+entry.title;
+   tab.mergeCells(2,1,2,num);tab.getCell(2,1).value='Sesión: '+snapshot.session+'  ·  Estado: '+entry.status;
+   tab.mergeCells(3,1,3,num);tab.getCell(3,1).value='Una vivienda = un voto. Abstención es diferente de Sin votar.';
+   tab.getRow(1).font={size:16,bold:true,color:{argb:'FF173A6B'}};
+   tab.getRow(1).height=35;tab.getRow(2).font={bold:true};
+   tab.getRow(3).font={italic:true,color:{argb:'FF59677C'}};
+   tab.getRow(5).values=entry.choices;
+   tab.getRow(6).values=entry.columns.map(column=>'Total: '+column.length);
+   const maxLen=Math.max(0,...entry.columns.map(column=>column.length));
+   for(let i=0;i<maxLen;i++){
+    tab.addRow(entry.columns.map(column=>column[i]||''));
+   }
+   tab.columns=entry.choices.map(()=>({width:27}));
+   tab.views=[{state:'frozen',ySplit:6}];
+   const heading=tab.getRow(5);
+   heading.font={bold:true,color:{argb:'FFFFFFFF'}};
+   heading.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF234B86'}};
+   heading.height=26;
+   tab.getRow(6).font={bold:true,color:{argb:'FF173A6B'}};
+   for(let row=7;row<=tab.rowCount;row++){
+    if(row%2===0)tab.getRow(row).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF1F5FC'}};
+   }
+   tab.autoFilter={from:{row:5,column:1},to:{row:5,column:num}};
+  }
+  const bytes=await book.xlsx.writeBuffer();
+  if(!bytes||!bytes.byteLength)throw Error('No se ha podido generar el Excel.');
+  const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob);
+  const anchor=document.createElement('a');anchor.href=url;anchor.download='VotaComunidad_'+snapshot.session+'_resultados.xlsx';
+  document.body.appendChild(anchor);anchor.click();anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  exportStarted=true;exportRevision=snapshot.revision;
+  notice('Excel generado. Ábrelo y comprueba que está guardado antes de finalizar.',true);
+ }catch(e){problem(e);}
+ finally{
+  working=false;button.disabled=false;button.textContent='Exportar Excel completo (.xlsx)';updateFinish();
+ }
+}
 function updateFinish(){let ready=exportStarted&&$('confirmSaved').checked&&!!room&&!working;$('finishBtn').disabled=!ready;$('finishStatus').textContent=exportStarted?'Comprueba el archivo descargado y confirma antes de eliminar.':'Primero exporta el CSV y comprueba su contenido.';}
 async function finishSession(){
  if(working||!room||!exportStarted||!$('confirmSaved').checked)return;
  if(questions.some(q=>q.status==='open'))return notice('Cierra todas las votaciones antes de finalizar.');
+ try{const latest=await getExportSnapshot();if(latest.revision!==exportRevision){exportStarted=false;exportRevision=null;$('confirmSaved').checked=false;updateFinish();return notice('Las respuestas o estados han cambiado desde la exportación. Descarga un Excel actualizado antes de finalizar.');}}catch(e){return problem(e);}
  if(!confirm('¿Has guardado el CSV? Esta acción eliminará la sesión, los votos y el censo de Supabase. No se puede deshacer.'))return;
  const typed=prompt('Para confirmar el borrado irreversible, escribe ELIMINAR:');
  if(typed!=='ELIMINAR')return notice('Cancelado: los datos siguen intactos.');
@@ -85,7 +217,7 @@ async function finishSession(){
    if(result.error)throw result.error;
    if(!result.data?.deleted)throw Error(result.data?.error||'No se confirmó la eliminación');
    const warning=result.data.warning;
-   leave();questions=[];counts=[];houses=[];members=[];myHouses=[];active=null;chosen=null;exportStarted=false;
+   leave();questions=[];counts=[];houses=[];members=[];myHouses=[];active=null;chosen=null;exportStarted=false;exportRevision=null;
    await db.auth.signOut();db=null;uid='';
    notice(warning||'Sesión y datos operativos eliminados. Guarda el CSV exportado.',!warning);
  }catch(e){problem(e);}finally{working=false;updateFinish();}
@@ -158,7 +290,7 @@ $('addHouses').onclick=async()=>{try{await importHomes(parseHomes($('housesManua
 
 async function copy(t){try{await navigator.clipboard.writeText(t);notice('Copiado al portapapeles',true);}catch{notice('No se ha podido copiar automáticamente');}}
 $('finishBtn').onclick=finishSession;$('confirmSaved').onchange=updateFinish;
-$('copyCode').onclick=()=>copy(room.code);$('copyLink').onclick=()=>copy(share());$('exportBtn').onclick=exportCsv;$('leaveOrg').onclick=leave;$('leaveParticipant').onclick=leave;
+$('copyCode').onclick=()=>copy(room.code);$('copyLink').onclick=()=>copy(share());$('exportBtn').onclick=exportXlsx;$('leaveOrg').onclick=leave;$('leaveParticipant').onclick=leave;
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){lastSnapshot='';refresh();}});
 (async()=>{if(!await connect())return;let c=new URLSearchParams(location.search).get('s');if(c){$('joinCode').value=c.toUpperCase();await join(c);}else{let id=localStorage.getItem('vota-last-room');if(id){let r=await db.from('sessions').select('*').eq('id',id).maybeSingle();if(!r.error&&r.data)enter(r.data);}}})();
 })();
