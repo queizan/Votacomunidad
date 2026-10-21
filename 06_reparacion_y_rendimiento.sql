@@ -172,6 +172,9 @@ GRANT EXECUTE ON FUNCTION public.participant_state(uuid),
  public.organizer_state(uuid),public.claim_my_dwellings(uuid,uuid[]),
  public.cast_unit_votes(uuid,text) TO authenticated;
 
+-- El organizador ya no asigna viviendas: impedir la llamada manual heredada.
+REVOKE EXECUTE ON FUNCTION public.assign_dwellings(uuid,uuid[],uuid) FROM authenticated;
+
 -- Invalidar la función antigua para impedir consultas adicionales innecesarias.
 -- No se retira porque podría existir un cliente antiguo en caché.
 NOTIFY pgrst, 'reload schema';
