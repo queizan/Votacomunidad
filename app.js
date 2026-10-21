@@ -203,12 +203,12 @@ async function exportXlsx(){
   working=false;button.disabled=false;button.textContent='Exportar Excel completo (.xlsx)';updateFinish();
  }
 }
-function updateFinish(){let ready=exportStarted&&$('confirmSaved').checked&&!!room&&!working;$('finishBtn').disabled=!ready;$('finishStatus').textContent=exportStarted?'Comprueba el archivo descargado y confirma antes de eliminar.':'Primero exporta el CSV y comprueba su contenido.';}
+function updateFinish(){let ready=exportStarted&&$('confirmSaved').checked&&!!room&&!working;$('finishBtn').disabled=!ready;$('finishStatus').textContent=exportStarted?'Comprueba el Excel descargado y confirma antes de eliminar.':'Primero exporta el Excel y comprueba su contenido.';}
 async function finishSession(){
  if(working||!room||!exportStarted||!$('confirmSaved').checked)return;
  if(questions.some(q=>q.status==='open'))return notice('Cierra todas las votaciones antes de finalizar.');
  try{const latest=await getExportSnapshot();if(latest.revision!==exportRevision){exportStarted=false;exportRevision=null;$('confirmSaved').checked=false;updateFinish();return notice('Las respuestas o estados han cambiado desde la exportación. Descarga un Excel actualizado antes de finalizar.');}}catch(e){return problem(e);}
- if(!confirm('¿Has guardado el CSV? Esta acción eliminará la sesión, los votos y el censo de Supabase. No se puede deshacer.'))return;
+ if(!confirm('¿Has guardado el Excel completo (.xlsx) con sus hojas de detalle? Esta acción eliminará la sesión, los votos y el censo de Supabase. No se puede deshacer.'))return;
  const typed=prompt('Para confirmar el borrado irreversible, escribe ELIMINAR:');
  if(typed!=='ELIMINAR')return notice('Cancelado: los datos siguen intactos.');
  working=true;updateFinish();
@@ -219,7 +219,7 @@ async function finishSession(){
    const warning=result.data.warning;
    leave();questions=[];counts=[];houses=[];members=[];myHouses=[];active=null;chosen=null;exportStarted=false;exportRevision=null;
    await db.auth.signOut();db=null;uid='';
-   notice(warning||'Sesión y datos operativos eliminados. Guarda el CSV exportado.',!warning);
+   notice(warning||'Sesión y datos operativos eliminados. Guarda el Excel exportado.',!warning);
  }catch(e){problem(e);}finally{working=false;updateFinish();}
 }
 function renderClaimPicker(){
