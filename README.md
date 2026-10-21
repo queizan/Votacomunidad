@@ -1,3 +1,15 @@
+# Actualización v1.5.3 — Corrección de importación, inicio limpio y Excel (21/10/2026)
+
+**Publicado en GitHub:** el inicio de VotaComunidad ya **no recupera la última sesión del almacenamiento del navegador**. Entrar en la URL raíz muestra las opciones «Crear sesión» y «Participar». Un enlace que contiene `?s=CÓDIGO` abre expresamente esa sesión y permite recargar durante una reunión. Pulsar «Inicio» elimina el código de la URL y del campo de entrada.
+
+**Importación corregida:** la operación se bloquea mientras se procesa para impedir dobles envíos y mensajes contradictorios; solo se limpia el campo tras confirmar el guardado. Si está vacío se muestra un aviso específico. Se pueden importar directamente archivos **.xlsx** (primera hoja, mediante ExcelJS) o **.csv** (con cabeceras `vivienda` o `portal;planta;puerta`), o escribir una vivienda por línea. Las plantas numéricas se normalizan como `4º`.
+
+**Exportación Excel completa:** si aparece el aviso «Falta ejecutar el SQL 07», la web está conectada pero la función `export_session_details` aún no está disponible en el proyecto Supabase. Abre [07_exportacion_excel_detallada.sql](07_exportacion_excel_detallada.sql), copia **Raw** y ejecútalo desde SQL Editor. Espera `excel_export_ready = true`. Si ya funcionó pero sigue el aviso, ejecuta `NOTIFY pgrst, 'reload schema';` y recarga la web. No se puede exportar el detalle de votos por vivienda sin esa función protegida.
+
+**Limitación:** la actualización del código se ha verificado en GitHub, pero no equivale a una prueba completa de lectura/escritura con las credenciales de tu Supabase. Tampoco ejecuta scripts SQL automáticamente ni instala la Edge Function de eliminación.
+
+---
+
 # Actualización v1.5 — Excel con detalle por vivienda (21/10/2026)
 
 **Requiere una acción en Supabase:** ejecuta [07_exportacion_excel_detallada.sql](07_exportacion_excel_detallada.sql) desde SQL Editor. Es una migración que únicamente añade una función de lectura, sin borrar datos. El resultado debería mostrar `excel_export_ready = true`. No necesitas repetir los SQL del 01 al 06.
