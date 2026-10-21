@@ -1,3 +1,17 @@
+# VotaComunidad v1.4 — corrección de votaciones y rendimiento (21/10/2026)
+
+**INSTALACIÓN OBLIGATORIA EN SUPABASE:** Ejecuta el archivo [06_reparacion_y_rendimiento.sql](06_reparacion_y_rendimiento.sql) completo desde **SQL Editor → New → Run**. Su resultado debe mostrar `participant_ready`, `organizer_ready`, `housing_ready` y `voting_ready` como `true`. Este script incluye la reparación de la migración 05, por lo que **no hace falta ejecutar también 05**. No elimina sesiones ni datos. **Los cambios del HTML/JS en GitHub no instalan por sí solos las funciones de Supabase.**
+
+El organizador ahora **solo importa el censo (CSV exportado desde Excel) o añade viviendas en el campo de texto**, y ve qué participantes están inscritos, qué viviendas han elegido y cuáles quedan sin asignar. Los participantes seleccionan sus viviendas libres desde el móvil; una operación atómica impide que dos personas reclamen la misma. El identificador mostrado es anónimo y **no verifica propiedad ni delegaciones**.
+
+La pregunta se crea en estado Pendiente; al pulsar **Abrir votación** pasa a Abierta y los participantes la reciben mediante la sincronización periódica. Esta versión usa una **consulta RPC cada 3 segundos por dispositivo**, frente a varias consultas encadenadas; el contenido solo se reconstruye cuando hay cambios. La consulta se pausa cuando la pestaña no está visible y se fuerza al regresar.
+
+**Prueba recomendada:** 1) ejecuta SQL 06; 2) vuelve a cargar la web; 3) desde el organizador crea sesión e importa viviendas; 4) entra desde otro navegador/móvil, busca y selecciona una vivienda, guárdala; 5) abre una pregunta; 6) comprueba que aparece en el móvil y que los votos incrementan el total; 7) comprueba con un tercer navegador que la vivienda está bloqueada. Si la aplicación indica «Falta instalar 06» tras instalarlo, vuelve a ejecutar `NOTIFY pgrst, 'reload schema';` en SQL Editor.
+
+**Importante:** código publicado y sintaxis/elementos verificados, pero la prueba integrada contra tu Supabase requiere que ejecutes SQL 06 y la hagas desde dispositivos reales. La función «Finalizar y eliminar» requiere aparte desplegar la Edge Function del documento [PRIVACIDAD.md](PRIVACIDAD.md). No se ha comprobado todavía el borrado real. La exportación actual es CSV compatible con Excel, no un fichero .xlsx nativo.
+
+---
+
 ## Actualización v1.3 — selección de viviendas y apertura de votaciones (21/10/2026)
 
 **Obligatorio para que funcionen las pantallas nuevas:** ejecutar [05_seleccion_viviendas_y_apertura.sql](05_seleccion_viviendas_y_apertura.sql) en el **SQL Editor** del proyecto de Supabase. No repetir los tres scripts iniciales; el archivo 05 es una migración aditiva que no elimina datos. **GitHub no ejecuta automáticamente migraciones SQL.**
