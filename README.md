@@ -1,3 +1,22 @@
+# Actualización v1.5 — Excel con detalle por vivienda (21/10/2026)
+
+**Requiere una acción en Supabase:** ejecuta [07_exportacion_excel_detallada.sql](07_exportacion_excel_detallada.sql) desde SQL Editor. Es una migración que únicamente añade una función de lectura, sin borrar datos. El resultado debería mostrar `excel_export_ready = true`. No necesitas repetir los SQL del 01 al 06.
+
+En el panel del organizador aparece **Exportar Excel completo (.xlsx)**:
+
+- **Resumen:** una fila por pregunta, con sesión, enunciado, estado y **una columna para cada opción** (Sí / No / Abstención u otras), más Total votos y Sin votar.
+- **Pregunta 1, Pregunta 2, ...:** una hoja por pregunta con las viviendas que eligieron cada respuesta, agrupadas en columnas. Incluye otra columna **Sin votar**; es diferente de una abstención explícita.
+- El censo y los votos se leen desde el servidor en el momento de exportar, no desde una captura antigua del navegador.
+- **Seguridad:** la nueva función SQL comprueba que `auth.uid()` sea el propietario de la sesión. Los participantes no tienen acceso al desglose por vivienda.
+- El generador ExcelJS se descarga bajo demanda de jsDelivr, versión 4.4.0. Se necesita conexión para iniciar la exportación.
+- Tras generar el archivo, el organizador debe verificar que se descargó y guardó. Antes del borrado se vuelve a comparar el estado de la sesión con la exportación: si hubo cambios, es obligatorio exportar otra vez.
+
+**Privacidad:** el XLSX revela qué ha votado cada vivienda. Ya no puede considerarse anónimo frente al organizador; debe custodiarse de forma privada y no compartirse públicamente. El borrado de Supabase no elimina las copias descargadas ni sus backups. Consulta [PRIVACIDAD.md](PRIVACIDAD.md).
+
+**Nota:** el flujo de eliminación al finalizar reunión requiere desplegar la Edge Function de `PRIVACIDAD.md`; no se ha validado todavía en una sesión real. El código se ha publicado en GitHub, pero la migración SQL 07 debe ejecutarse manualmente en tu proyecto Supabase.
+
+---
+
 # VotaComunidad v1.4 — corrección de votaciones y rendimiento (21/10/2026)
 
 **INSTALACIÓN OBLIGATORIA EN SUPABASE:** Ejecuta el archivo [06_reparacion_y_rendimiento.sql](06_reparacion_y_rendimiento.sql) completo desde **SQL Editor → New → Run**. Su resultado debe mostrar `participant_ready`, `organizer_ready`, `housing_ready` y `voting_ready` como `true`. Este script incluye la reparación de la migración 05, por lo que **no hace falta ejecutar también 05**. No elimina sesiones ni datos. **Los cambios del HTML/JS en GitHub no instalan por sí solos las funciones de Supabase.**
