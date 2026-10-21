@@ -1,7 +1,7 @@
 (()=>{
 'use strict';
 const $=id=>document.getElementById(id), cfg=window.VOTA_CONFIG||{};
-let db=null,uid='',room=null,mode='',questions=[],counts=[],houses=[],members=[],myHouses=[],availableHomes=[],claimLocked=false,claimEditing=false,claimDraft=new Set(),active=null,poll=null,chosen=null,working=false,lastSnapshot='',lastError='';
+let db=null,uid='',room=null,mode='',questions=[],counts=[],houses=[],members=[],myHouses=[],availableHomes=[],claimLocked=false,claimEditing=false,claimDraft=new Set(),active=null,poll=null,chosen=null,working=false,importBusy=false,lastSnapshot='',lastError='';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function notice(t,ok=false){let e=$('alert');e.textContent=t;e.className='alert'+(ok?' ok':'');clearTimeout(notice.t);notice.t=setTimeout(()=>e.classList.add('hidden'),6500);}
 const problem=e=>notice(e?.message||String(e));
@@ -12,7 +12,7 @@ const newCode=()=>{const letters='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',a=new Uint32
 async function create(){if(working)return;working=true;try{if(!await connect())return;let r;for(let i=0;i<4;i++){r=await db.from('sessions').insert({code:newCode(),owner_id:uid,title:'Reunión de comunidad'}).select().single();if(!r.error||r.error.code!=='23505')break;}if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 async function join(v){if(working)return;working=true;try{if(!await connect())return;let c=String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(c.length!==8)throw Error('Introduce un código de 8 caracteres.');const j=await db.rpc('join_session',{access_code:c});if(j.error)throw j.error;const r=await db.from('sessions').select('*').eq('id',j.data).single();if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 function share(){let u=new URL(location.href);u.search='';u.hash='';u.searchParams.set('s',room.code);return u.toString();}
-function enter(r){availableHomes=[];claimLocked=false;claimEditing=false;claimDraft=new Set();lastSnapshot='';lastError='';exportStarted=false;exportRevision=null;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,3000);}
+function enter(r){availableHomes=[];claimLocked=false;claimEditing=false;claimDraft=new Set();lastSnapshot='';lastError='';exportStarted=false;exportRevision=null;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.removeItem('vota-last-room');if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,3000);}
 function leave(){clearInterval(poll);room=null;localStorage.removeItem('vota-last-room');history.replaceState(null,'',location.pathname);show('landing');}
 let exportStarted=false;
 let loading=false;
@@ -93,7 +93,7 @@ async function getExportSnapshot(){
  const {data,error}=await db.rpc('export_session_details',{p_session:room.id});
  if(error){
   if(/schema cache|could not find the function|PGRST202/i.test(error.message||''))
-   throw Error('Falta ejecutar el SQL 07_exportacion_excel_detallada.sql en Supabase.');
+   throw Error('Supabase no encuentra la función de exportación. Ejecuta 07_exportacion_excel_detallada.sql en SQL Editor; si ya lo ejecutaste, fuerza NOTIFY pgrst, \'reload schema\'; y vuelve a probar.');
   throw error;
  }
  if(!data||!Array.isArray(data.questions)||!Array.isArray(data.dwellings)||!Array.isArray(data.votes)||!data.revision)
@@ -271,11 +271,46 @@ function renderHouses(){
  const filter=($('rosterFilter').value||'').trim().toLocaleLowerCase('es');
  const matching=unassigned.filter(h=>h.label.toLocaleLowerCase('es').includes(filter));
  $('rosterUnassigned').innerHTML=matching.length?matching.slice(0,180).map(h=>'<span class="pill gray">'+esc(h.label)+'</span>').join(' ')+(matching.length>180?'<p class="micro">Mostrando 180 de '+matching.length+'. Usa el buscador.</p>':''):'<p class="muted">No hay viviendas pendientes con ese filtro.</p>';
- for(const id of ['housesFile','housesManual','addHouses'])$(id).disabled=locked();
+ for(const id of ['housesFile','housesManual','addHouses'])$(id).disabled=locked()||importBusy;
 }
 function csvParts(line,sep){let a=[],v='',quoted=false;for(let i=0;i<line.length;i++){let c=line[i];if(c==='"'){if(quoted&&line[i+1]==='"'){v+='"';i++;}else quoted=!quoted;}else if(c===sep&&!quoted){a.push(v.trim());v='';}else v+=c;}a.push(v.trim());return a;}
 function parseHomes(s){let lines=s.replace(/^\uFEFF/,'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)return [];let sep=lines[0].includes(';')?';':',',h=csvParts(lines[0],sep).map(x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')),portal=h.findIndex(x=>['portal','numero','bloque'].includes(x)),planta=h.findIndex(x=>['planta','piso'].includes(x)),puerta=h.findIndex(x=>['puerta','letra'].includes(x)),vivienda=h.findIndex(x=>['vivienda','casa'].includes(x)),header=portal>=0||vivienda>=0;return [...new Set((header?lines.slice(1):lines).map(line=>{if(!header)return line;let x=csvParts(line,sep);return [portal>=0?x[portal]:'',vivienda>=0?x[vivienda]:'',planta>=0?x[planta]:'',puerta>=0?x[puerta]:''].filter(Boolean).join(' ');}).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length&&x.length<=100))];}
-async function importHomes(labels){if(locked())throw Error('El censo está bloqueado');if(!labels.length)throw Error('No hay viviendas válidas');if(labels.length>5000)throw Error('Máximo 5000 viviendas');const r=await db.rpc('import_dwellings',{p_session:room.id,p_labels:labels});if(r.error)throw r.error;notice(labels.length+' viviendas procesadas',true);refresh();}
+async function importHomes(labels){
+ if(!room||mode!=='organizer')throw Error('Debes entrar como organizador para importar viviendas.');
+ if(locked())throw Error('El censo está bloqueado: ya ha comenzado una votación.');
+ if(!labels.length)throw Error('No se encontraron viviendas. Escribe una por línea o revisa las columnas del CSV.');
+ if(labels.length>5000)throw Error('El máximo es de 5000 viviendas por importación.');
+ const {error}=await db.rpc('import_dwellings',{p_session:room.id,p_labels:labels});
+ if(error)throw error;
+ lastSnapshot='';
+ await refresh();
+ notice(labels.length+' vivienda(s) procesada(s) correctamente.',true);
+ return labels.length;
+}
+function setImportBusy(busy){
+ importBusy=busy;
+ for(const id of ['addHouses','housesFile','housesManual']){
+  const el=$(id);
+  el.disabled=busy||locked();
+ }
+ $('addHouses').textContent=busy?'Importando…':'Añadir viviendas';
+}
+async function submitHousingImport(content,fromFile=false){
+ if(importBusy)return;
+ if(!String(content||'').trim()){
+  notice(fromFile?'El archivo está vacío. Selecciona un CSV con viviendas.':'Escribe al menos una vivienda antes de pulsar Añadir viviendas.');
+  return;
+ }
+ let labels;
+ try{labels=parseHomes(content);}catch(e){problem(e);return;}
+ if(!labels.length){notice('No se han encontrado viviendas válidas. Comprueba el formato y vuelve a intentarlo.');return;}
+ setImportBusy(true);
+ try{
+  await importHomes(labels);
+  if(!fromFile)$('housesManual').value='';
+ }catch(e){problem(e);}
+ finally{setImportBusy(false);}
+}
 
 $('themeBtn').onclick=()=>{document.documentElement.classList.toggle('dark');localStorage.setItem('vota-theme',document.documentElement.classList.contains('dark')?'dark':'light');};if(localStorage.getItem('vota-theme')==='dark')document.documentElement.classList.add('dark');
 $('createBtn').onclick=create;$('joinForm').onsubmit=e=>{e.preventDefault();join($('joinCode').value);};
@@ -293,12 +328,36 @@ $('claimList').onchange=e=>{
 $('claimSearch').oninput=renderClaimPicker;
 $('rosterFilter').oninput=renderHouses;
 $('claimBtn').onclick=claimSelected;
-$('housesFile').onchange=async e=>{let f=e.target.files[0];if(!f)return;try{await importHomes(parseHomes(await f.text()));}catch(err){problem(err);}e.target.value='';};
-$('addHouses').onclick=async()=>{try{await importHomes(parseHomes($('housesManual').value));$('housesManual').value='';}catch(e){problem(e);}};
+$('housesFile').onchange=async e=>{
+ if(importBusy){e.target.value='';return;}
+ const f=e.target.files?.[0];if(!f)return;
+ // El bloqueo se activa antes de leer el archivo para evitar dos importaciones simultáneas.
+ importBusy=true;
+ $('housesFile').disabled=true;$('addHouses').disabled=true;$('housesManual').disabled=true;
+ try{
+  if(!/\.(csv|txt)$/i.test(f.name))throw Error('El archivo debe ser CSV. Desde Excel selecciona Guardar como → CSV UTF-8.');
+  const content=await f.text();
+  const labels=parseHomes(content);
+  if(!labels.length)throw Error('El CSV no contiene viviendas válidas. Usa la columna vivienda o portal;planta;puerta.');
+  await importHomes(labels);
+ }catch(err){problem(err);}
+ finally{importBusy=false;e.target.value='';setImportBusy(false);}
+};
+$('addHouses').onclick=()=>submitHousingImport($('housesManual').value);
 
 async function copy(t){try{await navigator.clipboard.writeText(t);notice('Copiado al portapapeles',true);}catch{notice('No se ha podido copiar automáticamente');}}
 $('finishBtn').onclick=finishSession;$('confirmSaved').onchange=updateFinish;
 $('copyCode').onclick=()=>copy(room.code);$('copyLink').onclick=()=>copy(share());$('exportBtn').onclick=exportXlsx;$('leaveOrg').onclick=leave;$('leaveParticipant').onclick=leave;
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){lastSnapshot='';refresh();}});
-(async()=>{if(!await connect())return;let c=new URLSearchParams(location.search).get('s');if(c){$('joinCode').value=c.toUpperCase();await join(c);}else{let id=localStorage.getItem('vota-last-room');if(id){let r=await db.from('sessions').select('*').eq('id',id).maybeSingle();if(!r.error&&r.data)enter(r.data);}}})();
+(async()=>{
+ // Portada siempre limpia: no reabrir automáticamente la última sesión.
+ localStorage.removeItem('vota-last-room');
+ const c=new URLSearchParams(location.search).get('s');
+ if(c){
+   $('joinCode').value=c.toUpperCase();
+   await join(c);
+ }else{
+   $('connectionStatus').textContent='Listo para crear o entrar en una sesión';
+ }
+})();
 })();
