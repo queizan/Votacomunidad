@@ -1,3 +1,5 @@
+> **Actualización de privacidad (21/10/2026):** incorporado el flujo «exportar CSV → confirmar → solicitar borrado», la función SQL y la Edge Function de limpieza de usuarios anónimos. **Todavía no está desplegado ni probado en Supabase.** Es necesario instalar primero schema.sql y upgrade_viviendas.sql (no están en este repositorio) y seguir [PRIVACIDAD.md](PRIVACIDAD.md). No uses el borrado para datos reales sin verificar toda la instalación. La eliminación de copias de seguridad no es inmediata.
+
 # VotaComunidad
 
 Web responsive para organizar votaciones desde cualquier móvil usando **HTML + CSS + JavaScript, GitHub Pages y Supabase**. No requiere servidor propio.
