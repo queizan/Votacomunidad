@@ -12,11 +12,12 @@ const newCode=()=>{const letters='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',a=new Uint32
 async function create(){if(working)return;working=true;try{if(!await connect())return;let r;for(let i=0;i<4;i++){r=await db.from('sessions').insert({code:newCode(),owner_id:uid,title:'Reunión de comunidad'}).select().single();if(!r.error||r.error.code!=='23505')break;}if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 async function join(v){if(working)return;working=true;try{if(!await connect())return;let c=String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(c.length!==8)throw Error('Introduce un código de 8 caracteres.');const j=await db.rpc('join_session',{access_code:c});if(j.error)throw j.error;const r=await db.from('sessions').select('*').eq('id',j.data).single();if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 function share(){let u=new URL(location.href);u.search='';u.hash='';u.searchParams.set('s',room.code);return u.toString();}
-function enter(r){room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,2500);}
+function enter(r){exportStarted=false;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,2500);}
 function leave(){clearInterval(poll);room=null;localStorage.removeItem('vota-last-room');history.replaceState(null,'',location.pathname);show('landing');}
+let exportStarted=false;
 let loading=false;
 async function refresh(){if(!db||!room||loading||working)return;loading=true;try{
-let r=await db.from('sessions').select('*').eq('id',room.id).single();if(r.error)throw r.error;room=r.data;
+let r=await db.from('sessions').select('*').eq('id',room.id).single();if(r.error){if(r.error.code==='PGRST116'){leave();notice('La sesión ya ha sido eliminada.');return;}throw r.error;}room=r.data;
 r=await db.from('questions').select('*').eq('session_id',room.id).order('created_at');if(r.error)throw r.error;questions=r.data;active=questions.find(q=>q.status==='open')||null;
 if(mode==='organizer'){
 const [m,v,h,p]=await Promise.all([db.from('members').select('*',{head:true,count:'exact'}).eq('session_id',room.id),db.from('unit_votes').select('question_id,choice').in('question_id',questions.length?questions.map(q=>q.id):['00000000-0000-0000-0000-000000000000']),db.from('dwellings').select('id,label,representative_id').eq('session_id',room.id).order('label'),db.from('members').select('user_id,joined_at').eq('session_id',room.id).order('joined_at')]);
@@ -43,7 +44,25 @@ $('ballotArea').innerHTML='<h2>'+esc(active.title)+'</h2><p class="muted">Tu res
 async function vote(i){if(working||!active)return;working=true;try{let o=active.options[i];if(o===undefined)throw Error('Opción no válida');let v=await db.rpc('cast_unit_votes',{p_question:active.id,p_choice:o});if(v.error)throw v.error;notice('Voto registrado correctamente',true);}catch(e){problem(e);}finally{working=false;refresh();}}
 async function addQuestion(e){e.preventDefault();if(working||!room)return;working=true;try{let title=$('questionTitle').value.trim(),options=$('questionType').value==='binary'?['Sí','No','Abstención']:$('questionOptions').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!title)throw Error('Escribe una pregunta');if(options.length<2||options.length>8||new Set(options).size!==options.length)throw Error('Introduce entre 2 y 8 opciones diferentes');let r=await db.from('questions').insert({session_id:room.id,title,options,status:'draft'});if(r.error)throw r.error;$('questionForm').reset();$('optionsBox').classList.add('hidden');notice('Pregunta añadida',true);}catch(e){problem(e);}finally{working=false;refresh();}}
 async function status(id,s){if(working)return;working=true;try{let r=await db.from('questions').update({status:s}).eq('id',id);if(r.error)throw r.error;chosen=null;notice(s==='open'?'Votación abierta':'Votación cerrada',true);}catch(e){problem(e);}finally{working=false;refresh();}}
-function exportCsv(){let rows=[['Sesión','Pregunta','Estado','Opción','Votos','Total votos']];for(let q of questions){let vs=ballots.filter(v=>v.question_id===q.id);for(let o of q.options)rows.push([room.code,q.title,q.status,o,vs.filter(v=>v.choice===o).length,vs.length]);}let quote=x=>'"'+String(x??'').replace(/"/g,'""')+'"',b=new Blob(['\ufeff'+rows.map(r=>r.map(quote).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='votaciones-'+room.code+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
+function exportCsv(){if(!room||!questions.length){notice('No hay preguntas para exportar');return;}let rows=[['Sesión','Pregunta','Estado','Opción','Votos','Total votos']];for(let q of questions){let vs=ballots.filter(v=>v.question_id===q.id);for(let o of q.options)rows.push([room.code,q.title,q.status,o,vs.filter(v=>v.choice===o).length,vs.length]);}let quote=x=>'"'+String(x??'').replace(/"/g,'""')+'"',b=new Blob(['\ufeff'+rows.map(r=>r.map(quote).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='votaciones-'+room.code+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);exportStarted=true;updateFinish();notice('Descarga iniciada: verifica que has guardado el CSV',true);}
+function updateFinish(){let ready=exportStarted&&$('confirmSaved').checked&&!!room&&!working;$('finishBtn').disabled=!ready;$('finishStatus').textContent=exportStarted?'Comprueba el archivo descargado y confirma antes de eliminar.':'Primero exporta el CSV y comprueba su contenido.';}
+async function finishSession(){
+ if(working||!room||!exportStarted||!$('confirmSaved').checked)return;
+ if(questions.some(q=>q.status==='open'))return notice('Cierra todas las votaciones antes de finalizar.');
+ if(!confirm('¿Has guardado el CSV? Esta acción eliminará la sesión, los votos y el censo de Supabase. No se puede deshacer.'))return;
+ const typed=prompt('Para confirmar el borrado irreversible, escribe ELIMINAR:');
+ if(typed!=='ELIMINAR')return notice('Cancelado: los datos siguen intactos.');
+ working=true;updateFinish();
+ try{
+   const result=await db.functions.invoke('finalizar-reunion',{body:{session_id:room.id,confirm_export:true}});
+   if(result.error)throw result.error;
+   if(!result.data?.deleted)throw Error(result.data?.error||'No se confirmó la eliminación');
+   const warning=result.data.warning;
+   leave();questions=[];ballots=[];houses=[];members=[];myHouses=[];active=null;chosen=null;exportStarted=false;
+   await db.auth.signOut();db=null;uid='';
+   notice(warning||'Sesión y datos operativos eliminados. Guarda el CSV exportado.',!warning);
+ }catch(e){problem(e);}finally{working=false;updateFinish();}
+}
 const locked=()=>questions.some(x=>x.status!=='draft');
 function renderHouses(){let checked=new Set([...document.querySelectorAll('[data-house]:checked')].map(x=>x.dataset.house)),old=$('representativeSelect').value;$('dwellingCounter').textContent=houses.length+' viviendas';$('representativeSelect').innerHTML='<option value="">Elige un asistente conectado</option>'+members.map(m=>'<option value="'+esc(m.user_id)+'">'+m.user_id.slice(0,8).toUpperCase()+' · '+houses.filter(x=>x.representative_id===m.user_id).length+' vivienda(s)</option>').join('');$('representativeSelect').value=old;
 $('housesList').innerHTML=houses.length?houses.map(h=>'<label class="house-item"><input type="checkbox" data-house="'+h.id+'" '+(checked.has(h.id)?'checked':'')+' '+(locked()?'disabled':'')+'><span><strong>'+esc(h.label)+'</strong><small>'+(h.representative_id?h.representative_id.slice(0,8).toUpperCase():'Sin asignar')+'</small></span></label>').join(''):'<p class="muted">Importa o añade viviendas.</p>';
@@ -63,6 +82,7 @@ $('housesFile').onchange=async e=>{let f=e.target.files[0];if(!f)return;try{awai
 $('addHouses').onclick=async()=>{try{await importHomes(parseHomes($('housesManual').value));$('housesManual').value='';}catch(e){problem(e);}};
 $('assignHouses').onclick=()=>assign($('representativeSelect').value||undefined);$('unassignHouses').onclick=()=>assign(null);
 async function copy(t){try{await navigator.clipboard.writeText(t);notice('Copiado al portapapeles',true);}catch{notice('No se ha podido copiar automáticamente');}}
+$('finishBtn').onclick=finishSession;$('confirmSaved').onchange=updateFinish;
 $('copyCode').onclick=()=>copy(room.code);$('copyLink').onclick=()=>copy(share());$('exportBtn').onclick=exportCsv;$('leaveOrg').onclick=leave;$('leaveParticipant').onclick=leave;
 (async()=>{if(!await connect())return;let c=new URLSearchParams(location.search).get('s');if(c){$('joinCode').value=c.toUpperCase();await join(c);}else{let id=localStorage.getItem('vota-last-room');if(id){let r=await db.from('sessions').select('*').eq('id',id).maybeSingle();if(!r.error&&r.data)enter(r.data);}}})();
 })();
