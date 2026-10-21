@@ -1,7 +1,7 @@
 (()=>{
 'use strict';
 const $=id=>document.getElementById(id), cfg=window.VOTA_CONFIG||{};
-let db=null,uid='',room=null,mode='',questions=[],ballots=[],houses=[],members=[],myHouses=[],active=null,poll=null,chosen=null,working=false;
+let db=null,uid='',room=null,mode='',questions=[],ballots=[],houses=[],members=[],myHouses=[],availableHomes=[],claimLocked=false,claimEditing=false,active=null,poll=null,chosen=null,working=false;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function notice(t,ok=false){let e=$('alert');e.textContent=t;e.className='alert'+(ok?' ok':'');clearTimeout(notice.t);notice.t=setTimeout(()=>e.classList.add('hidden'),6500);}
 const problem=e=>notice(e?.message||String(e));
@@ -12,7 +12,7 @@ const newCode=()=>{const letters='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',a=new Uint32
 async function create(){if(working)return;working=true;try{if(!await connect())return;let r;for(let i=0;i<4;i++){r=await db.from('sessions').insert({code:newCode(),owner_id:uid,title:'Reunión de comunidad'}).select().single();if(!r.error||r.error.code!=='23505')break;}if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 async function join(v){if(working)return;working=true;try{if(!await connect())return;let c=String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(c.length!==8)throw Error('Introduce un código de 8 caracteres.');const j=await db.rpc('join_session',{access_code:c});if(j.error)throw j.error;const r=await db.from('sessions').select('*').eq('id',j.data).single();if(r.error)throw r.error;enter(r.data);}catch(e){problem(e);}finally{working=false;}}
 function share(){let u=new URL(location.href);u.search='';u.hash='';u.searchParams.set('s',room.code);return u.toString();}
-function enter(r){exportStarted=false;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,2500);}
+function enter(r){availableHomes=[];claimLocked=false;claimEditing=false;exportStarted=false;$('confirmSaved').checked=false;updateFinish();room=r;mode=r.owner_id===uid?'organizer':'participant';localStorage.setItem('vota-last-room',r.id);if(mode==='organizer'){$('organizerTitle').textContent=r.title;$('roomCode').textContent=r.code;$('shareLink').textContent=share();}else{$('participantTitle').textContent=r.title;$('participantCode').textContent=r.code;}show(mode);clearInterval(poll);refresh();poll=setInterval(refresh,2500);}
 function leave(){clearInterval(poll);room=null;localStorage.removeItem('vota-last-room');history.replaceState(null,'',location.pathname);show('landing');}
 let exportStarted=false;
 let loading=false;
@@ -24,8 +24,12 @@ const [m,v,h,p]=await Promise.all([db.from('members').select('*',{head:true,coun
 for(let x of [m,v,h,p])if(x.error)throw x.error;
 ballots=v.data;houses=h.data;members=p.data;$('memberCount').textContent=m.count||0;renderOrg();renderHouses();
 }else{
-const h=await db.from('dwellings').select('id,label').eq('session_id',room.id).eq('representative_id',uid).order('label');if(h.error)throw h.error;myHouses=h.data;
-let myVote=null;if(active){const v=await db.from('unit_votes').select('choice').eq('question_id',active.id).eq('representative_id',uid).limit(1);if(v.error)throw v.error;myVote=v.data?.[0]?.choice||null;}renderParticipant(myVote);
+const [h,roster]=await Promise.all([
+ db.from('dwellings').select('id,label').eq('session_id',room.id).eq('representative_id',uid).order('label'),
+ db.rpc('list_session_dwellings',{p_session:room.id})
+]);if(h.error)throw h.error;if(roster.error)throw roster.error;
+myHouses=h.data;availableHomes=roster.data||[];claimLocked=!!availableHomes[0]?.selection_locked;
+let myVote=null;if(active){const v=await db.from('unit_votes').select('choice').eq('question_id',active.id).eq('representative_id',uid).limit(1);if(v.error)throw v.error;myVote=v.data?.[0]?.choice||null;}renderParticipant(myVote);renderClaimPicker();
 }
 $('connectionStatus').textContent='Actualizado · '+new Date().toLocaleTimeString('es-ES');
 }catch(e){$('connectionStatus').textContent='Error de sincronización';console.error(e);notice(e.message||'Error al actualizar');}finally{loading=false;}}
@@ -38,7 +42,7 @@ $('resultsContent').innerHTML='<div class="result-title">'+esc(q.title)+'</div><
 }
 function renderParticipant(v){$('participantIdentity').textContent=uid.slice(0,8).toUpperCase();$('myHouses').textContent=myHouses.length?myHouses.length+' vivienda(s): '+myHouses.map(x=>x.label).join(', '):'Todavía no tienes viviendas asignadas. Pide al organizador que las asigne.';$('participantBadge').textContent=active?'Votación abierta':'Esperando';
 if(!active){$('ballotArea').innerHTML='<div class="wait-icon">◷</div><h2>Esperando a que se abra una pregunta</h2><p class="muted">Esta pantalla se actualizará automáticamente.</p>';return;}
-if(!myHouses.length){$('ballotArea').innerHTML='<h2>Sin viviendas asignadas</h2><p class="muted">Comunica tu identificador al organizador.</p>';return;}
+if(!myHouses.length){$('ballotArea').innerHTML='<h2>Selecciona tus viviendas para votar</h2><p class="muted">Elige las viviendas disponibles en el listado superior y pulsa Guardar viviendas seleccionadas.</p>';return;}
 $('ballotArea').innerHTML='<h2>'+esc(active.title)+'</h2><p class="muted">Tu respuesta contará para '+myHouses.length+' vivienda(s).</p>'+active.options.map((o,i)=>'<button type="button" class="option '+(o===v?'selected':'')+'" data-choice="'+i+'"><span class="radio-dot"></span><span>'+esc(o)+'</span></button>').join('')+'<p class="vote-note">'+(v?'✓ Voto registrado. Puedes modificarlo antes del cierre.':'Aún no has votado.')+'</p>';
 }
 async function vote(i){if(working||!active)return;working=true;try{let o=active.options[i];if(o===undefined)throw Error('Opción no válida');let v=await db.rpc('cast_unit_votes',{p_question:active.id,p_choice:o});if(v.error)throw v.error;notice('Voto registrado correctamente',true);}catch(e){problem(e);}finally{working=false;refresh();}}
@@ -63,11 +67,46 @@ async function finishSession(){
    notice(warning||'Sesión y datos operativos eliminados. Guarda el CSV exportado.',!warning);
  }catch(e){problem(e);}finally{working=false;updateFinish();}
 }
+function renderClaimPicker(){
+ const area=$('claimList');
+ let checked=claimEditing
+    ?new Set([...area.querySelectorAll('[data-claim]:checked')].map(c=>c.dataset.claim))
+    :new Set(myHouses.map(h=>h.id));
+ area.innerHTML=availableHomes.length?availableHomes.map(h=>{
+   const blocked=h.occupied&&!h.mine,selected=!blocked&&checked.has(h.id),disabled=blocked||claimLocked;
+   return '<label class="house-item '+(blocked?'unavailable':'')+'"><input type="checkbox" data-claim="'+h.id+'" '+(selected?'checked':'')+' '+(disabled?'disabled':'')+'><span><strong>'+esc(h.label)+'</strong><small>'+(h.mine?'Tu vivienda':blocked?'Ya seleccionada':'Disponible')+'</small></span></label>';
+ }).join(''):'<p class="muted">Todavía no se ha importado el censo. Espera al organizador.</p>';
+ const hasSelection=checked.size>0;
+ $('claimBtn').disabled=claimLocked||!availableHomes.length||!hasSelection||working;
+ $('claimStatus').textContent=claimLocked
+   ?'Ya has emitido un voto. Tus viviendas están bloqueadas.'
+   :availableHomes.filter(h=>h.occupied&&!h.mine).length+' viviendas asignadas a otros · '+availableHomes.filter(h=>!h.occupied).length+' disponibles. Guarda tu selección antes de votar.';
+}
+async function claimSelected(){
+ if(working||!room||claimLocked)return;
+ const ids=[...document.querySelectorAll('#claimList [data-claim]:checked')].map(e=>e.dataset.claim);
+ if(!ids.length)return notice('Selecciona al menos una vivienda');
+ const oldCount=myHouses.length;
+ working=true;
+ try{
+   const r=await db.rpc('claim_my_dwellings',{p_session:room.id,p_ids:ids});
+   if(r.error)throw r.error;
+   claimEditing=false;
+   notice('Viviendas asignadas: '+r.data+'. Ya puedes participar.',true);
+ }catch(e){problem(e);claimEditing=false;}
+ finally{working=false;refresh();}
+}
 const locked=()=>questions.some(x=>x.status!=='draft');
 function renderHouses(){let checked=new Set([...document.querySelectorAll('[data-house]:checked')].map(x=>x.dataset.house)),old=$('representativeSelect').value;$('dwellingCounter').textContent=houses.length+' viviendas';$('representativeSelect').innerHTML='<option value="">Elige un asistente conectado</option>'+members.map(m=>'<option value="'+esc(m.user_id)+'">'+m.user_id.slice(0,8).toUpperCase()+' · '+houses.filter(x=>x.representative_id===m.user_id).length+' vivienda(s)</option>').join('');$('representativeSelect').value=old;
 $('housesList').innerHTML=houses.length?houses.map(h=>'<label class="house-item"><input type="checkbox" data-house="'+h.id+'" '+(checked.has(h.id)?'checked':'')+' '+(locked()?'disabled':'')+'><span><strong>'+esc(h.label)+'</strong><small>'+(h.representative_id?h.representative_id.slice(0,8).toUpperCase():'Sin asignar')+'</small></span></label>').join(''):'<p class="muted">Importa o añade viviendas.</p>';
 $('rosterStatus').textContent=locked()?'Censo bloqueado: ya empezó una votación.':houses.filter(h=>h.representative_id).length+' asignadas · '+houses.filter(h=>!h.representative_id).length+' sin asignar · '+members.length+' asistentes';
 for(let id of ['housesFile','housesManual','addHouses','assignHouses','unassignHouses','representativeSelect'])$(id).disabled=locked();
+$('rosterParticipants').innerHTML=members.length?members.map(m=>{
+ const assigned=houses.filter(h=>h.representative_id===m.user_id);
+ return '<div class="question-row"><strong>'+esc(m.user_id.slice(0,8).toUpperCase())+'</strong><span class="pill '+(assigned.length?'green':'gray')+'">'+assigned.length+' vivienda(s)</span><div class="micro">'+(assigned.length?assigned.map(h=>esc(h.label)).join(', '):'Pendiente de asignar')+'</div></div>';
+}).join(''):'<p class="muted">Todavía no hay participantes registrados.</p>';
+const unassigned=houses.filter(h=>!h.representative_id);
+$('rosterUnassigned').innerHTML=unassigned.length?unassigned.map(h=>'<span class="pill gray">'+esc(h.label)+'</span>').join(' '):'<p class="muted">Todas las viviendas están asignadas.</p>';
 }
 function csvParts(line,sep){let a=[],v='',quoted=false;for(let i=0;i<line.length;i++){let c=line[i];if(c==='"'){if(quoted&&line[i+1]==='"'){v+='"';i++;}else quoted=!quoted;}else if(c===sep&&!quoted){a.push(v.trim());v='';}else v+=c;}a.push(v.trim());return a;}
 function parseHomes(s){let lines=s.replace(/^\uFEFF/,'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);if(!lines.length)return [];let sep=lines[0].includes(';')?';':',',h=csvParts(lines[0],sep).map(x=>x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')),portal=h.findIndex(x=>['portal','numero','bloque'].includes(x)),planta=h.findIndex(x=>['planta','piso'].includes(x)),puerta=h.findIndex(x=>['puerta','letra'].includes(x)),vivienda=h.findIndex(x=>['vivienda','casa'].includes(x)),header=portal>=0||vivienda>=0;return [...new Set((header?lines.slice(1):lines).map(line=>{if(!header)return line;let x=csvParts(line,sep);return [portal>=0?x[portal]:'',vivienda>=0?x[vivienda]:'',planta>=0?x[planta]:'',puerta>=0?x[puerta]:''].filter(Boolean).join(' ');}).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length&&x.length<=100))];}
@@ -78,6 +117,12 @@ $('createBtn').onclick=create;$('joinForm').onsubmit=e=>{e.preventDefault();join
 $('questionForm').onsubmit=addQuestion;$('questionType').onchange=()=> $('optionsBox').classList.toggle('hidden',$('questionType').value!=='multiple');
 $('questionsList').onclick=e=>{let b=e.target.closest('button');if(!b)return;if(b.dataset.open)status(b.dataset.open,'open');if(b.dataset.close&&confirm('¿Cerrar esta votación?'))status(b.dataset.close,'closed');if(b.dataset.result){chosen=b.dataset.result;renderOrg();}};
 $('ballotArea').onclick=e=>{let b=e.target.closest('[data-choice]');if(b)vote(Number(b.dataset.choice));};
+$('claimList').onchange=e=>{
+ if(!e.target.matches('[data-claim]'))return;
+ claimEditing=true;
+ $('claimBtn').disabled=claimLocked||working||![...document.querySelectorAll('#claimList [data-claim]:checked')].length;
+};
+$('claimBtn').onclick=claimSelected;
 $('housesFile').onchange=async e=>{let f=e.target.files[0];if(!f)return;try{await importHomes(parseHomes(await f.text()));}catch(err){problem(err);}e.target.value='';};
 $('addHouses').onclick=async()=>{try{await importHomes(parseHomes($('housesManual').value));$('housesManual').value='';}catch(e){problem(e);}};
 $('assignHouses').onclick=()=>assign($('representativeSelect').value||undefined);$('unassignHouses').onclick=()=>assign(null);
