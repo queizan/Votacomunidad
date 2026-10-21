@@ -1,3 +1,18 @@
+## Actualización v1.3 — selección de viviendas y apertura de votaciones (21/10/2026)
+
+**Obligatorio para que funcionen las pantallas nuevas:** ejecutar [05_seleccion_viviendas_y_apertura.sql](05_seleccion_viviendas_y_apertura.sql) en el **SQL Editor** del proyecto de Supabase. No repetir los tres scripts iniciales; el archivo 05 es una migración aditiva que no elimina datos. **GitHub no ejecuta automáticamente migraciones SQL.**
+
+- Al unirse por código, el participante ve todas las viviendas: **Disponible**, **Tu vivienda** o **Ya seleccionada**. Puede marcar varias y pulsar **Guardar viviendas seleccionadas**.
+- El bloqueo de reclamaciones es **atómico en Supabase**: si dos personas reclaman la misma vivienda, solo la primera operación confirmada puede asignarla. La segunda recibe error y debe actualizar.
+- Una persona que ya haya emitido algún voto no puede cambiar sus viviendas. Se puede registrar una representación antes o durante las preguntas abiertas, si esa persona aún no ha votado.
+- El organizador ve una lista de participantes registrados (identificadores anónimos de 8 caracteres), viviendas de cada uno y viviendas aún sin asignar. «Registrados» **no** significa que estén conectados en ese preciso momento.
+- Se elimina el bloqueo anterior que impedía abrir preguntas cuando aún no había viviendas asignadas. Los participantes deben elegir vivienda antes de enviar su respuesta. La pregunta abierta aparece normalmente en unos 2,5 segundos.
+- El mensaje de error al abrir/cerrar votaciones aparece ahora de forma visible en la pantalla.
+
+**Limitación de seguridad:** esto evita duplicidades pero **no verifica que una persona sea propietaria ni esté autorizada** para representar las viviendas que selecciona. Un usuario que tenga el código puede reclamar viviendas libres. El organizador debe contrastar la representación fuera de la app; no usar en acuerdos jurídicamente vinculantes sin controles adicionales.
+
+**Privacidad/borrado:** el botón de finalización sigue necesitando ejecutar [privacy_purge.sql](privacy_purge.sql) y desplegar la Edge Function descrita en [PRIVACIDAD.md](PRIVACIDAD.md). No se ha desplegado ni verificado automáticamente.
+
 > **Actualización de privacidad (21/10/2026):** incorporado el flujo «exportar CSV → confirmar → solicitar borrado», la función SQL y la Edge Function de limpieza de usuarios anónimos. **Todavía no está desplegado ni probado en Supabase.** Es necesario instalar primero schema.sql y upgrade_viviendas.sql (no están en este repositorio) y seguir [PRIVACIDAD.md](PRIVACIDAD.md). No uses el borrado para datos reales sin verificar toda la instalación. La eliminación de copias de seguridad no es inmediata.
 
 # VotaComunidad
