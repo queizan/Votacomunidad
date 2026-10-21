@@ -214,7 +214,15 @@ async function finishSession(){
  working=true;updateFinish();
  try{
    const result=await db.functions.invoke('finalizar-reunion',{body:{session_id:room.id,confirm_export:true}});
-   if(result.error)throw result.error;
+   if(result.error){
+     let message=result.error.message||'Error de conexión con Supabase';
+     if(result.error.name==='FunctionsFetchError' || /Failed to send a request to the Edge Function/i.test(message)){
+       message='No se pudo contactar con la función finalizar-reunion. Comprueba que está desplegada en Supabase → Edge Functions. Conserva el Excel: no se ha podido confirmar el borrado.';
+     }else if(result.error.context?.json){
+       try{const payload=await result.error.context.json();if(payload?.error)message=payload.error;}catch{}
+     }
+     throw Error(message);
+   }
    if(!result.data?.deleted)throw Error(result.data?.error||'No se confirmó la eliminación');
    const warning=result.data.warning;
    leave();questions=[];counts=[];houses=[];members=[];myHouses=[];active=null;chosen=null;exportStarted=false;exportRevision=null;
